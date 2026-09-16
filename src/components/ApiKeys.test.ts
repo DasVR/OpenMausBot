@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StoreProvider } from "@/state/store";
 import * as store from "@/state/store";
-import { ApiKeyRow, OpenAiCompatUrl } from "./ApiKeys";
+import { ApiKeyRow, ClaudeBillingNote, OpenAiCompatUrl, ProviderUrl } from "./ApiKeys";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -54,5 +54,26 @@ describe("provider key rows", () => {
     expect(html).toContain("OpenAI-compatible base URL");
     expect(html).toContain('placeholder="https://openrouter.ai/api/v1"');
     expect(html).toContain("api.openai.com/v1");
+  });
+
+  it("renders Ollama Cloud as its own write-only row with ollama.com defaults", () => {
+    const row = render(createElement(ApiKeyRow, { section: "ollamaCloud", testProvider: "ollamaCloud" }));
+    expect(row).toContain("Ollama Cloud API key");
+    expect(row).toContain('type="password"');
+    expect(row).toContain('aria-label="About Ollama Cloud API key"');
+    expect(row).not.toContain(">Test<");
+
+    const url = render(createElement(ProviderUrl, { section: "ollamaCloud" }));
+    expect(url).toContain("Ollama Cloud base URL");
+    expect(url).toContain('placeholder="https://ollama.com/v1"');
+  });
+
+  it("tells the operator which Claude account is paying", () => {
+    const subscription = render(createElement(ClaudeBillingNote, { apiKeySaved: false, onOpenEngines: () => {} }));
+    expect(subscription).toContain("Claude Code sign-in");
+    expect(subscription).toContain("Open Engines");
+    const apiKey = render(createElement(ClaudeBillingNote, { apiKeySaved: true, onOpenEngines: () => {} }));
+    expect(apiKey).toContain("workspace Anthropic API key");
+    expect(apiKey).toContain("takes precedence");
   });
 });

@@ -42,7 +42,10 @@ instance at it:
 
 The built-in `openai-compat` driver supports multiple instances, so a local
 vLLM/LM Studio/Ollama-openai endpoint or any hosted compatible API is one
-entry:
+entry. (Ollama Cloud on ollama.com needs no entry: it ships as the
+`ollamaCloud` engine and takes its key from Settings → Connections — see
+[das-providers.md](das-providers.md). The same `instances` shape with
+`"driver": "ollamaCloud"` adds a second ollama.com account.)
 
 ```json
 {

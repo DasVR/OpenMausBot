@@ -319,6 +319,10 @@ const appConfigSchema = z.object({
   openaiCompat: z
     .object({ key: optionalText, url: optionalText, model: optionalText, provider: optionalText })
     .optional(),
+  /** Ollama Cloud (ollama.com) API key, handed only to Ollama Cloud
+   * instances; `url` only for a proxy or a test double. Local Ollama on
+   * 127.0.0.1 needs no key and is discovered separately (local-inject). */
+  ollamaCloud: z.object({ key: optionalText, url: optionalText }).optional(),
   /** Project key used for Sessions, catalog and agent tools. userId/sessionId
    * are non-secret local identifiers used to reuse one Composio Session. */
   composio: z.object({ apiKey: optionalText, userId: optionalText, sessionId: optionalText }).optional(),
@@ -408,6 +412,7 @@ export interface AppConfig {
   budgets?: { monthlyUsd?: number; warnAtPercent?: number };
   billing?: { currency?: string; prices?: Record<string, { inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion?: number }> };
   openaiCompat?: { key?: string; url?: string; model?: string; provider?: string };
+  ollamaCloud?: { key?: string; url?: string };
   composio?: { apiKey?: string; userId?: string; sessionId?: string };
   box?: { token?: string };
   /** A named host from the user's SSH config. Authentication stays with SSH. */
@@ -697,6 +702,11 @@ export function loadConfig(): AppConfig {
   if (process.env.OPENAI_COMPAT_URL !== undefined) cfg.openaiCompat.url = process.env.OPENAI_COMPAT_URL;
   if (process.env.OPENAI_COMPAT_MODEL !== undefined) cfg.openaiCompat.model = process.env.OPENAI_COMPAT_MODEL;
   if (process.env.OPENAI_COMPAT_PROVIDER !== undefined) cfg.openaiCompat.provider = process.env.OPENAI_COMPAT_PROVIDER;
+  // OMB_-prefixed like Anthropic: a bare OLLAMA_API_KEY in the server's env
+  // belongs to whoever runs `ollama` there, not to the workspace.
+  cfg.ollamaCloud = { ...cfg.ollamaCloud };
+  if (process.env.OMB_OLLAMA_API_KEY !== undefined) cfg.ollamaCloud.key = process.env.OMB_OLLAMA_API_KEY;
+  if (process.env.OMB_OLLAMA_API_URL !== undefined) cfg.ollamaCloud.url = process.env.OMB_OLLAMA_API_URL;
   cfg.composio = { ...cfg.composio };
   if (process.env.COMPOSIO_API_KEY !== undefined) cfg.composio.apiKey = process.env.COMPOSIO_API_KEY;
   cfg.box = { ...cfg.box };
@@ -732,6 +742,7 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
     [patch.xai?.key, "XAI_API_KEY"],
     [patch.anthropic?.key, "OMB_ANTHROPIC_API_KEY"],
     [patch.openaiCompat?.key, "OPENAI_COMPAT_API_KEY"],
+    [patch.ollamaCloud?.key, "OMB_OLLAMA_API_KEY"],
     [patch.composio?.apiKey, "COMPOSIO_API_KEY"],
     [patch.box?.token, "BOX_TOKEN"],
     [patch.opencodeGo?.apiKey, "OPENCODE_API_KEY"],
@@ -750,6 +761,7 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
   const settings: Array<[value: string | undefined, name: string]> = [
     [patch.openaiCompat?.url, "OPENAI_COMPAT_URL"],
     [patch.anthropic?.url, "OMB_ANTHROPIC_API_URL"],
+    [patch.ollamaCloud?.url, "OMB_OLLAMA_API_URL"],
     [patch.openaiCompat?.model, "OPENAI_COMPAT_MODEL"],
     [patch.openaiCompat?.provider, "OPENAI_COMPAT_PROVIDER"],
   ];
@@ -771,6 +783,8 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "OMB_ANTHROPIC_API_URL",
   "OPENAI_COMPAT_API_KEY",
   "OPENAI_COMPAT_URL",
+  "OMB_OLLAMA_API_KEY",
+  "OMB_OLLAMA_API_URL",
   "BOX_TOKEN",
   "OPENCODE_API_KEY",
   "OMB_TTS_KEY",
@@ -827,7 +841,7 @@ export function saveConfig(patch: Partial<AppConfig>, options: { replaceInstance
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "anthropic", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "threads", "localVm", "features", "budgets", "billing", "onboarding"] as const) {
+  for (const key of ["xai", "anthropic", "openaiCompat", "ollamaCloud", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "threads", "localVm", "features", "budgets", "billing", "onboarding"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
@@ -963,9 +977,27 @@ function injectedEnvironment(cfg: AppConfig, driver: string): Map<string, string
     environment.set("OPENAI_COMPAT_API_KEY", cfg.openaiCompat.key);
   if (driver === "openai-compat" && cfg.openaiCompat?.url)
     environment.set("OPENAI_COMPAT_URL", cfg.openaiCompat.url);
+  // Same shape as Anthropic: the workspace key reaches the driver under the
+  // name Ollama's own tooling uses, carried in the instance environment.
+  if (driver === "ollamaCloud" && cfg.ollamaCloud?.key) environment.set("OLLAMA_API_KEY", cfg.ollamaCloud.key);
   if (driver === "boxAgent" && cfg.box?.token) environment.set("BOX_TOKEN", cfg.box.token);
   if (driver === "opencodeGo" && cfg.opencodeGo?.apiKey) environment.set("OPENCODE_API_KEY", cfg.opencodeGo.apiKey);
   return environment;
+}
+
+/** Non-secret workspace settings a driver's instances inherit as config
+ * defaults (a per-instance value always wins). Null for drivers without
+ * a Connections section. */
+function workspaceConfigDefaults(cfg: AppConfig, driver: string): Record<string, string> | null {
+  if (driver === "openai-compat" && cfg.openaiCompat) {
+    const defaults: Record<string, string> = {};
+    if (cfg.openaiCompat.url) defaults.url = cfg.openaiCompat.url;
+    if (cfg.openaiCompat.model) defaults.model = cfg.openaiCompat.model;
+    if (cfg.openaiCompat.provider) defaults.provider = cfg.openaiCompat.provider;
+    return defaults;
+  }
+  if (driver === "ollamaCloud" && cfg.ollamaCloud?.url) return { url: cfg.ollamaCloud.url };
+  return null;
 }
 
 // Default fleet: one instance per built-in driver (upstream
@@ -999,6 +1031,7 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     opencodeGo: { driver: "opencodeGo" },
     computer: { driver: "boxAgent" },
     openaiCompat: { driver: "openai-compat" },
+    ollamaCloud: { driver: "ollamaCloud" },
     qwen: { driver: "qwenAgent" },
     hermes: { driver: "hermesAgent" },
     pi: { driver: "piAgent" },
@@ -1014,6 +1047,7 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
   const PRODUCT_FLEET_ADDITIONS = {
     cursor: { driver: "cursorAgent" },
     openaiCompat: { driver: "openai-compat" },
+    ollamaCloud: { driver: "ollamaCloud" },
     ...CUSTOM_ONLY,
   } as const;
   const configured = cfg.instances && Object.keys(cfg.instances).length ? cfg.instances : null;
@@ -1041,25 +1075,20 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     // intentionally not consulted by ProviderRegistry when it decodes a
     // driver's config, so carry the workspace default into the transient
     // instance map while preserving a per-instance override.
-    if (entry.driver === "openai-compat" && cfg.openaiCompat) {
-      const defaults: Record<string, string> = {};
-      if (cfg.openaiCompat.url) defaults.url = cfg.openaiCompat.url;
-      if (cfg.openaiCompat.model) defaults.model = cfg.openaiCompat.model;
-      if (cfg.openaiCompat.provider) defaults.provider = cfg.openaiCompat.provider;
-      if (Object.keys(defaults).length) {
-        const raw = entry.config;
-        const current =
-          typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
-        const merged = { ...current };
-        // A per-instance value always wins over the workspace default.
-        for (const [k, v] of Object.entries(defaults)) {
-          // Empty routing explicitly means "no upstream pin" for isolated
-          // API connections. Do not replace it with a workspace provider.
-          if (k === "provider" && typeof merged[k] === "string") continue;
-          if (typeof merged[k] !== "string" || !(merged[k] as string).trim()) merged[k] = v;
-        }
-        entry.config = merged;
+    const defaults = workspaceConfigDefaults(cfg, entry.driver);
+    if (defaults && Object.keys(defaults).length) {
+      const raw = entry.config;
+      const current =
+        typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+      const merged = { ...current };
+      // A per-instance value always wins over the workspace default.
+      for (const [k, v] of Object.entries(defaults)) {
+        // Empty routing explicitly means "no upstream pin" for isolated
+        // API connections. Do not replace it with a workspace provider.
+        if (k === "provider" && typeof merged[k] === "string") continue;
+        if (typeof merged[k] !== "string" || !(merged[k] as string).trim()) merged[k] = v;
       }
+      entry.config = merged;
     }
   }
   return map;

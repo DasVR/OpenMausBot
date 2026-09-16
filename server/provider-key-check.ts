@@ -1,22 +1,26 @@
 // One cheap, read-only request with a short timeout, from the server that
 // will use the key. OpenRouter's model catalog is public, so authenticate
-// there through /key. Other compatible servers retain their models probe,
-// whose success proves only catalog access, not authentication or chat.
-// The answer is a verdict and, on success, a few model ids; never the key,
-// never the raw response. Keys travel only over TLS, except to a loopback
-// test double.
-export type ProviderKeyKind = "anthropic" | "openaiCompat" | "xai";
+// there through /key; Ollama Cloud's catalog is public too, so authenticate
+// there through the native /api/ps (running models), which rejects a bad
+// key. Other compatible servers retain their models probe, whose success
+// proves only catalog access, not authentication or chat. The answer is a
+// verdict and, on success, a few model ids; never the key, never the raw
+// response. Keys travel only over TLS, except to a loopback test double.
+import { ollamaNativeOrigin, OLLAMA_CLOUD_URL } from "./drivers/ollama-cloud.ts";
+
+export type ProviderKeyKind = "anthropic" | "openaiCompat" | "xai" | "ollamaCloud";
 
 export type ProviderKeyVerdict =
   | { ok: true; check: "authentication" | "models"; models: string[] }
   | { ok: false; reason: "rejected" | "unreachable" | "unexpected"; status?: number };
 
-export const PROVIDER_KEY_KINDS: readonly ProviderKeyKind[] = ["anthropic", "openaiCompat", "xai"];
+export const PROVIDER_KEY_KINDS: readonly ProviderKeyKind[] = ["anthropic", "openaiCompat", "xai", "ollamaCloud"];
 
 const DEFAULT_URLS: Record<ProviderKeyKind, string> = {
   anthropic: "https://api.anthropic.com",
   openaiCompat: "https://openrouter.ai/api/v1",
   xai: "https://api.x.ai/v1",
+  ollamaCloud: OLLAMA_CLOUD_URL,
 };
 
 const MAX_MODELS = 5;
@@ -31,6 +35,12 @@ export function providerModelsUrl(provider: ProviderKeyKind, base?: string | nul
   const root = (base?.trim() || DEFAULT_URLS[provider]).replace(/\/+$/, "");
   if (provider === "anthropic") return root.endsWith("/v1") ? `${root}/models` : `${root}/v1/models`;
   return `${root}/models`;
+}
+
+/** The authenticated, read-only endpoint that proves an Ollama Cloud key:
+ * the native running-models list beside the OpenAI-compatible base. */
+export function ollamaCloudProbeUrl(base?: string | null): string {
+  return `${ollamaNativeOrigin(base?.trim() || DEFAULT_URLS.ollamaCloud)}/api/ps`;
 }
 
 function modelIds(body: unknown): string[] {
@@ -54,7 +64,7 @@ export async function checkProviderKey(
   if (!input.key.trim()) return { ok: false, reason: "rejected" };
   let url: URL;
   try {
-    url = new URL(providerModelsUrl(input.provider, input.url));
+    url = new URL(input.provider === "ollamaCloud" ? ollamaCloudProbeUrl(input.url) : providerModelsUrl(input.provider, input.url));
   } catch {
     return { ok: false, reason: "unexpected" };
   }
@@ -78,6 +88,12 @@ export async function checkProviderKey(
     if (!response.ok) return { ok: false, reason: "unexpected", status: response.status };
     const body: unknown = await response.json().catch(() => null);
     if (!body || typeof body !== "object") return { ok: false, reason: "unexpected", status: response.status };
+    if (input.provider === "ollamaCloud") {
+      // /api/ps answers `{ models: [...] }` only to a valid key; the running
+      // models themselves are the account's business, not this verdict's.
+      if (!Array.isArray((body as { models?: unknown }).models)) return { ok: false, reason: "unexpected", status: response.status };
+      return { ok: true, check: "authentication", models: [] };
+    }
     if (authenticate) {
       const data = (body as { data?: unknown }).data;
       if (!data || typeof data !== "object" || Array.isArray(data)

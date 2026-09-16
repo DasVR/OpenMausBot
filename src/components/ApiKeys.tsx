@@ -8,9 +8,9 @@ import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 
-export type ConfigSection = "composio" | "box" | "opencodeGo" | "anthropic" | "openaiCompat" | "xai";
+export type ConfigSection = "composio" | "box" | "opencodeGo" | "anthropic" | "openaiCompat" | "ollamaCloud" | "xai";
 /** Sections whose key can be tried against the provider from the server. */
-export type TestableProvider = "anthropic" | "openaiCompat" | "xai";
+export type TestableProvider = "anthropic" | "openaiCompat" | "ollamaCloud" | "xai";
 
 const SECTIONS: Record<
   ConfigSection,
@@ -24,6 +24,7 @@ const SECTIONS: Record<
   opencodeGo: { body: (v) => ({ opencodeGo: { apiKey: v } }), flag: (c) => c.opencodeGo?.configured ?? false },
   anthropic: { body: (v) => ({ anthropic: { key: v } }), flag: (c) => c.anthropic?.configured ?? false },
   openaiCompat: { body: (v) => ({ openaiCompat: { key: v } }), flag: (c) => c.openaiCompat?.configured ?? false },
+  ollamaCloud: { body: (v) => ({ ollamaCloud: { key: v } }), flag: (c) => c.ollamaCloud?.configured ?? false },
   xai: { body: (v) => ({ xai: { key: v } }), flag: (c) => c.xai?.configured ?? false },
 };
 
@@ -88,6 +89,14 @@ const CREDENTIALS: Record<
     descriptionKey: "keys.openaiCompat.desc",
     href: "https://openrouter.ai/keys",
     linkLabelKey: "keys.openaiCompat.link",
+    optional: true,
+  },
+  ollamaCloud: {
+    labelKey: "keys.ollamaCloud.label",
+    placeholderKey: "keys.ollamaCloud.placeholder",
+    descriptionKey: "keys.ollamaCloud.desc",
+    href: "https://ollama.com/settings/keys",
+    linkLabelKey: "keys.ollamaCloud.link",
     optional: true,
   },
   xai: {
@@ -398,11 +407,21 @@ export function VpsConnection() {
   );
 }
 
-/** The OpenAI-compatible engine's base URL: a setting next to its key, so
- * OpenRouter, Groq, Together or OpenAI itself are one field away. */
-export function OpenAiCompatUrl() {
+/** Sections whose engine reads a non-secret base URL saved next to its key. */
+type UrlSection = "openaiCompat" | "ollamaCloud";
+
+const URL_FIELDS: Record<UrlSection, { labelKey: LocaleKey; hintKey: LocaleKey; placeholder: string }> = {
+  openaiCompat: { labelKey: "keys.openaiCompat.url", hintKey: "keys.openaiCompat.urlHint", placeholder: "https://openrouter.ai/api/v1" },
+  ollamaCloud: { labelKey: "keys.ollamaCloud.url", hintKey: "keys.ollamaCloud.urlHint", placeholder: "https://ollama.com/v1" },
+};
+
+/** An engine's base URL: a setting next to its key, so OpenRouter, Groq,
+ * Together, OpenAI itself, or a proxy in front of Ollama Cloud are one
+ * field away. */
+export function ProviderUrl({ section }: { section: UrlSection }) {
   const { state, dispatch } = useStore();
-  const saved = state.config?.openaiCompat?.url ?? "";
+  const field = URL_FIELDS[section];
+  const saved = state.config?.[section]?.url ?? "";
   const [value, setValue] = useState(saved);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -413,7 +432,7 @@ export function OpenAiCompatUrl() {
     if (saving || !dirty) return;
     setSaving(true);
     setError(null);
-    api("/api/config", { method: "PUT", body: JSON.stringify({ openaiCompat: { url: value.trim() } }) })
+    api("/api/config", { method: "PUT", body: JSON.stringify({ [section]: { url: value.trim() } }) })
       .then((status: ConfigStatus) => dispatch({ type: "configStatus", config: status }))
       .catch((e) => setError(e.message))
       .finally(() => setSaving(false));
@@ -421,15 +440,15 @@ export function OpenAiCompatUrl() {
 
   return (
     <div>
-      <div className="mb-1.5 text-[13px] text-ink-secondary">{t("keys.openaiCompat.url")}</div>
+      <div className="mb-1.5 text-[13px] text-ink-secondary">{t(field.labelKey)}</div>
       <div className="flex gap-2">
         <input
           type="url"
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && save()}
-          placeholder="https://openrouter.ai/api/v1"
-          aria-label={t("keys.openaiCompat.url")}
+          placeholder={field.placeholder}
+          aria-label={t(field.labelKey)}
           spellCheck={false}
           className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
         />
@@ -441,8 +460,32 @@ export function OpenAiCompatUrl() {
           {saving ? <Loader2 size={13} className="animate-spin" /> : <><Check size={13} />{t("common.save")}</>}
         </button>
       </div>
-      <p className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">{t("keys.openaiCompat.urlHint")}</p>
+      <p className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">{t(field.hintKey)}</p>
       {error && <div className="mt-1 text-[12px] text-danger">{error}</div>}
+    </div>
+  );
+}
+
+export function OpenAiCompatUrl() {
+  return <ProviderUrl section="openaiCompat" />;
+}
+
+/** Which account pays for Claude bots right now. Two paths exist — a Claude
+ * Code sign-in (Pro/Max subscription, per person, under Engines) and the
+ * workspace Anthropic key below (per token) — and the saved key wins. */
+export function ClaudeBillingNote({ apiKeySaved, onOpenEngines }: { apiKeySaved: boolean; onOpenEngines: () => void }) {
+  return (
+    <div className="rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[12px] leading-relaxed text-ink-secondary">
+      <div className="flex items-center gap-2">
+        <span className={cn("size-1.5 shrink-0 rounded-full", apiKeySaved ? "bg-warning" : "bg-success")} aria-hidden="true" />
+        <span className="font-medium text-ink">{t(apiKeySaved ? "keys.claude.onApiKey" : "keys.claude.onSubscription")}</span>
+      </div>
+      <p className="mt-1">
+        {t("keys.claude.paths")}{" "}
+        <button type="button" onClick={onOpenEngines} className="text-accent hover:underline">
+          {t("keys.claude.openEngines")}
+        </button>
+      </p>
     </div>
   );
 }

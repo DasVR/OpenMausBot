@@ -134,7 +134,8 @@ messaging app — your agents behave like contacts.
 ### 🔑 Keys once, everything lights up
 
 Paste credentials in App Settings — they persist locally and the provider fleet hot-reloads instantly.
-Secrets are write-only: the UI only ever sees "configured" flags.
+Secrets are write-only: the UI only ever sees "configured" flags. Ollama Cloud (Pro/Max or free tier)
+and the Claude subscription-vs-API-key choice are covered in [`docs/das-providers.md`](docs/das-providers.md).
 
 <img src="docs/screenshots/app-settings.png" alt="App-level settings with API keys" width="100%">
 
