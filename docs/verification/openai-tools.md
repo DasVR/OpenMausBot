@@ -74,7 +74,7 @@ Content-Type: application/json
 
 Use the exact instance ID from `pnpm control:omb models --url URL`, and direct
 the request only to that explicitly selected server. The route accepts this
-setting for OpenAI-compatible, Grok API, and MiniMax API instances, refuses
+setting for OpenAI-compatible, Grok API, MiniMax API, and Ollama Cloud instances, refuses
 changes while the instance is busy, and stores `config.tools` on that instance.
 Set `tools` back to `true` to enable discovery and execution. This affects all
 bots using the instance; use separate configured instances for models with

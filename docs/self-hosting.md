@@ -307,7 +307,37 @@ that makes one read-only request to the provider from the server.
   Together, a gateway, or `https://api.openai.com/v1` for OpenAI itself. This
   powers the OpenAI-compatible engine. Codex has no key path by design and
   always uses a personal ChatGPT login.
+- **Ollama Cloud API key and base URL**: a key from
+  [ollama.com/settings/keys](https://ollama.com/settings/keys) runs the
+  **Ollama Cloud** engine against `https://ollama.com/v1` on your ollama.com
+  account — a Pro or Max plan, or the free tier — and usage counts against
+  that account's limits rather than per token. The picker lists the hosted
+  catalog live. The base URL only changes for a proxy in front of
+  ollama.com. Env: `OMB_OLLAMA_API_KEY` and `OMB_OLLAMA_API_URL`; a bare
+  `OLLAMA_API_KEY` on the server is ignored for the same reason as
+  `ANTHROPIC_API_KEY`. A local Ollama on the same machine needs no key at
+  all: its models are found on `127.0.0.1:11434` and offered under Local
+  models in the picker.
 - **xAI API key**: the Grok API engine and xAI image generation.
+
+### Claude: who is paying
+
+Claude bots can run on either of two accounts, and Settings → Connections
+says which one is active right now:
+
+| Path | Where | Paid by | Shown in Engines as |
+| --- | --- | --- | --- |
+| **Claude Code sign-in** | Settings → Engines → Claude → Sign in | The signed-in person's Claude Pro/Max subscription, subject to its usage limits | the account's email |
+| **Anthropic API key** | Settings → Connections → Anthropic API key (or `OMB_ANTHROPIC_API_KEY`) | Your Anthropic console, per token | "workspace API key" |
+
+A saved key takes precedence: while one is present, every Claude bot uses
+it and no sign-in is consulted. Remove the key to hand billing back to
+personal sign-ins. There is no separate "Claude Pro API"; a subscription is
+only ever reached through the signed-in `claude` CLI.
+
+[das-providers.md](das-providers.md) collects the Ollama Cloud and Claude
+settings above, with every environment variable, on one page for a
+headless deploy.
 
 ## Many client workspaces on one server
 
