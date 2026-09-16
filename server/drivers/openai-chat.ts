@@ -86,7 +86,7 @@ interface RuntimeOptions<Config> {
   refreshModels?: () => Promise<void>;
   generateModel?: () => string;
   reasoning?: boolean;
-  billing?: "metered";
+  billing?: "metered" | "subscription";
   includeUsageInCompleted?: boolean;
   noBodyError?: string;
   retryScale?: number;

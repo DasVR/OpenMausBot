@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { checkProviderKey, providerModelsUrl } from "./provider-key-check.ts";
+import { checkProviderKey, ollamaCloudProbeUrl, providerModelsUrl } from "./provider-key-check.ts";
 
 // A local stand-in for a provider's models endpoint. It records the
 // headers it saw and answers per the key it was given; no real provider
@@ -97,6 +97,31 @@ describe("provider key check", () => {
       .toEqual({ ok: true, check: "authentication", models: [] });
     expect(paths).toHaveLength(2);
     expect(paths.every((path) => path.endsWith("/key"))).toBe(true);
+  });
+
+  it("authenticates Ollama Cloud at the native /api/ps, whose public catalog would accept any key", async () => {
+    const paths: string[] = [];
+    const ollama: typeof fetch = async (input, init) => {
+      const url = String(input);
+      paths.push(url);
+      expect(init?.redirect).toBe("manual");
+      if (url.endsWith("/models") || url.endsWith("/api/tags")) return Response.json({ models: [{ model: "public-model" }] });
+      expect(url).toBe("https://ollama.com/api/ps");
+      const authorized = new Headers(init?.headers).get("authorization") === "Bearer valid-fixture-key";
+      return authorized
+        ? Response.json({ models: [{ model: "gpt-oss:120b", expires_at: "2026-09-16T00:00:00Z" }] })
+        : Response.json({ error: "unauthorized" }, { status: 401 });
+    };
+    expect(ollamaCloudProbeUrl()).toBe("https://ollama.com/api/ps");
+    expect(ollamaCloudProbeUrl("https://proxy.example.test/v1/")).toBe("https://proxy.example.test/api/ps");
+    expect(await checkProviderKey({ provider: "ollamaCloud", key: "invalid-fixture-key" }, ollama))
+      .toEqual({ ok: false, reason: "rejected", status: 401 });
+    expect(await checkProviderKey({ provider: "ollamaCloud", key: "valid-fixture-key", url: "https://ollama.com/v1/" }, ollama))
+      .toEqual({ ok: true, check: "authentication", models: [] });
+    expect(paths).toEqual(["https://ollama.com/api/ps", "https://ollama.com/api/ps"]);
+    // A 200 that is not the running-models list (a proxy's login page, say) proves nothing.
+    expect(await checkProviderKey({ provider: "ollamaCloud", key: "fixture" }, async () => Response.json({ data: [] })))
+      .toEqual({ ok: false, reason: "unexpected", status: 200 });
   });
 
   it("does not call a custom compatible server's nonexistent /key endpoint", async () => {

@@ -510,6 +510,29 @@ describe("default fleet", () => {
     });
   });
 
+  it("ships Ollama Cloud in the default fleet and hands its key only to Ollama Cloud instances", () => {
+    expect(instanceConfigs({}).ollamaCloud).toEqual({ driver: "ollamaCloud", environment: {} });
+    const map = instanceConfigs({
+      ollamaCloud: { key: "ollama-fixture", url: "https://ollama-proxy.example.test/v1" },
+      instances: {
+        ollamaCloud: { driver: "ollamaCloud" },
+        second: { driver: "ollamaCloud", config: { url: "https://instance.example.test/v1" } },
+        openaiCompat: { driver: "openai-compat" },
+        claude: { driver: "claudeAgent" },
+      },
+    });
+    // The workspace key travels under the name Ollama's own tooling reads;
+    // the URL is a setting, carried as config with a per-instance override winning.
+    expect(map.ollamaCloud.environment).toEqual({ OLLAMA_API_KEY: "ollama-fixture" });
+    expect(map.ollamaCloud.config).toEqual({ url: "https://ollama-proxy.example.test/v1" });
+    expect(map.second.environment).toEqual({ OLLAMA_API_KEY: "ollama-fixture" });
+    expect(map.second.config).toEqual({ url: "https://instance.example.test/v1" });
+    expect(map.openaiCompat.environment).toEqual({});
+    expect(map.claude.environment).toEqual({});
+    expect(instanceConfigs({ ollamaCloud: { key: "k" } }).ollamaCloud.config).toBeUndefined();
+    expect(parseConfigPatch({ ollamaCloud: { key: "k", url: "https://ollama.com/v1" } })).toEqual({ ollamaCloud: { key: "k", url: "https://ollama.com/v1" } });
+  });
+
   it("hands a saved Anthropic key only to Claude instances, as the variable the CLI reads", () => {
     const map = instanceConfigs({ anthropic: { key: "sk-ant-fixture", url: "https://anthropic-proxy.example.test" } });
     expect(map.claude.environment).toEqual({ ANTHROPIC_API_KEY: "sk-ant-fixture", ANTHROPIC_BASE_URL: "https://anthropic-proxy.example.test" });
@@ -577,6 +600,7 @@ describe("default fleet", () => {
     expect(map.hermes?.driver).toBe("hermesAgent");
     expect(map.cursor?.driver).toBe("cursorAgent");
     expect(map.openaiCompat?.driver).toBe("openai-compat");
+    expect(map.ollamaCloud?.driver).toBe("ollamaCloud");
   });
 
   it("does not expand a one-off shadow fleet", () => {
@@ -800,6 +824,9 @@ describe("credential env preference", () => {
     "OMB_FISH_AUDIO_API_KEY",
     "OMB_OPENAI_IMAGE_KEY",
     "COMPOSIO_API_KEY",
+    "OMB_OLLAMA_API_KEY",
+    "OMB_OLLAMA_API_URL",
+    "OLLAMA_API_KEY",
   ] as const;
   let saved: Record<string, string | undefined>;
 
@@ -843,6 +870,27 @@ describe("credential env preference", () => {
     expect(cfg.opencodeGo).toEqual({ apiKey: "env-ocg" });
     expect(cfg.tts).toEqual({ key: "env-tts", fishKey: "env-fish", voice: "narrator" });
     expect(cfg.imageGen).toEqual({ key: "env-image" });
+  });
+
+  it("takes the Ollama Cloud key from OMB_OLLAMA_API_KEY, never from a bare OLLAMA_API_KEY", () => {
+    writeFileSync(join(DATA_DIR, "config.json"), JSON.stringify({ ollamaCloud: { key: "file-ollama" } }));
+    // Whoever runs `ollama` on this server has their own key in the env;
+    // that is not the workspace's credential.
+    process.env.OLLAMA_API_KEY = "operators-personal-key";
+    expect(loadConfig().ollamaCloud).toEqual({ key: "file-ollama" });
+    process.env.OMB_OLLAMA_API_KEY = "env-ollama";
+    process.env.OMB_OLLAMA_API_URL = "https://ollama-proxy.example.test/v1";
+    expect(loadConfig().ollamaCloud).toEqual({ key: "env-ollama", url: "https://ollama-proxy.example.test/v1" });
+    expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_OLLAMA_API_KEY");
+    expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_OLLAMA_API_URL");
+  });
+
+  it("syncCredentialEnv keeps the Ollama Cloud key and URL in step with a save", () => {
+    process.env.OMB_OLLAMA_API_KEY = "boot-injected";
+    process.env.OMB_OLLAMA_API_URL = "https://boot.example.test/v1";
+    syncCredentialEnv({ ollamaCloud: { key: "just-saved", url: "" } });
+    expect(process.env.OMB_OLLAMA_API_KEY).toBe("just-saved");
+    expect(process.env.OMB_OLLAMA_API_URL).toBeUndefined();
   });
 
   it("saves and removes the verified domain without replacing existing settings", () => {
